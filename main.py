@@ -486,7 +486,8 @@ class Project(QMainWindow, Ui_MainWindow):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu('Файл')
         redact_menu = menu_bar.addMenu('Справка')
-        save_act = file_menu.addAction('Сохранить')
+        save_act = file_menu.addAction('Экспорт')
+        import_act = file_menu.addAction('Импорт')
         new_city = file_menu.addAction('Добавить город')
         redact_city = file_menu.addAction('Изменить город')
         del_city = file_menu.addAction('Удалить город')
@@ -495,6 +496,7 @@ class Project(QMainWindow, Ui_MainWindow):
 
         # привязываем функции к событиям
         save_act.triggered.connect(self.save)
+        import_act.triggered.connect(self.import_data)
         new_city.triggered.connect(self.new_city)
         redact_city.triggered.connect(self.redact_city)
         del_city.triggered.connect(self.del_city)
@@ -981,6 +983,180 @@ class Project(QMainWindow, Ui_MainWindow):
                 return False
 
         return True
+
+    def import_data(self):
+        # Открываем диалог с фильтром для всех поддерживаемых файлов
+        fname = QFileDialog.getOpenFileName(
+            self, 'Импорт данных', '',
+            'Все поддерживаемые файлы (*.xlsx *.csv *.db);;'
+            'Excel (*.xlsx);;CSV (*.csv);;База данных (*.db)'
+        )[0]
+        if not fname:
+            return
+
+        try:
+            # Определяем, какую функцию вызвать, по расширению файла
+            if fname.endswith('.xlsx'):
+                self._parse_excel(fname)
+            elif fname.endswith('.csv'):
+                self._parse_csv(fname)
+            elif fname.endswith('.db'):
+                self._load_db_file(fname)
+            else:
+                QMessageBox.warning(self, 'Ошибка', 'Неизвестный формат файла')
+                return
+
+            # Если всё прошло успешно, обновляем таблицу
+            self.upd_table()
+            QMessageBox.information(self, 'Успех',
+                                    'Данные успешно импортированы!')
+
+        except Exception as e:
+            QMessageBox.critical(self, 'Ошибка',
+                                 f'Не удалось выполнить операцию:\n{e}')
+
+    def _load_db_file(self, fname):
+        shutil.copy(fname, self.db_path)
+
+    def _parse_excel(self, fname):
+        wb = op.load_workbook(fname, read_only=True, data_only=True)
+        with sl.connect(self.db_path) as con:
+            cur = con.cursor()
+
+            if 'Города' in wb.sheetnames:
+                rows = wb['Города'].iter_rows(min_row=2, values_only=True)
+                self._process_rows(cur, rows, is_city=True)
+
+            if 'Достопримечательности' in wb.sheetnames:
+                rows = wb['Достопримечательности'].iter_rows(
+                    min_row=2, values_only=True)
+                self._process_rows(cur, rows, is_city=False)
+
+            con.commit()
+        wb.close()
+
+    def _parse_csv(self, fname):
+        base_dir = os.path.dirname(fname)
+        base_name = os.path.basename(fname)
+
+        cities_file = None
+        atrs_file = None
+
+        if base_name.endswith('_cities.csv'):
+            # Если выбрали файл городов, ищем достопримечательности рядом
+            second_name = base_name.replace('cities', 'attractions')
+            cities_file = fname
+            atrs_file = os.path.join(base_dir, second_name)
+        elif base_name.endswith('_attractions.csv'):
+            # Если выбрали файл достопримечательностей, ищем города рядом
+            second_name = base_name.replace('attractions', 'cities')
+            cities_file = os.path.join(base_dir, second_name)
+            atrs_file = fname
+        else:
+            # Если имя непонятное, заглядываем внутрь файла и считаем колонки
+            with open(fname, encoding='utf-8') as f:
+                reader = csv.reader(f, delimiter=';')
+                try:
+                    header = next(reader)  # Читаем первую строку (заголовки)
+                except StopIteration:
+                    return  # Файл пустой
+
+                if len(header) == 3:
+                    # Если 3 колонки, значит это города
+                    cities_file = fname
+                elif len(header) == 6:
+                    # Если 6, значит это достопримечательности
+                    atrs_file = fname
+                else:
+                    QMessageBox.critical(
+                        self, "Ошибка",
+                        "Файл не похож ни на список городов, ни на список "
+                        "достопримечательностей. "
+                        "Проверьте количество столбцов."
+                    )
+                    return
+
+        with sl.connect(self.db_path) as con:
+            cur = con.cursor()
+
+            # Читаем города (если они есть)
+            if cities_file and os.path.exists(cities_file):
+                with open(cities_file, encoding='utf-8') as f:
+                    reader = csv.reader(f, delimiter=';')
+                    next(reader, None)  # Пропускаем заголовки
+                    self._process_rows(cur, reader, is_city=True)
+
+            # Читаем достопримечательности (если они есть)
+            if atrs_file and os.path.exists(atrs_file):
+                with open(atrs_file, encoding='utf-8') as f:
+                    reader = csv.reader(f, delimiter=';')
+                    next(reader, None)  # Пропускаем заголовки
+                    self._process_rows(cur, reader, is_city=False)
+
+            con.commit()
+
+    def _clean_values(self, row, n):
+        res = []
+        # если данных не хватает они станут None
+        for val in (list(row) + [None] * n)[:n]:
+            if val is None:
+                res.append(None)
+                continue
+            val = str(val).strip()
+            res.append(val if val != "" else None)
+        return res
+
+    def _save_city(self, cur: sl.Cursor, row: list):
+        if not row:
+            return
+        name, lat, lon = self._clean_values(row, 3)
+        name = name if name else ''
+        if not name:
+            return
+
+        lat = self._safe_float(lat)
+        lon = self._safe_float(lon)
+
+        # если такой город есть он обновит координаты
+        cur.execute('''
+            INSERT INTO cities (name, lat, lon) VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET lat=excluded.lat, lon=excluded.lon
+        ''', (name, lat, lon))
+
+    def _save_attraction(self, cur: sl.Cursor, row: list):
+        city_name, name, desc, image, lat, lon = self._clean_values(row, 6)
+
+        if not city_name or not name:
+            return
+
+        lat = self._safe_float(lat)
+        lon = self._safe_float(lon)
+
+        desc = str(desc) if desc is not None else ''
+        image = str(image) if image is not None else ''
+
+        cur.execute('INSERT OR IGNORE INTO cities (name) VALUES (?)',
+                    (city_name,))
+        cur.execute('''
+            INSERT INTO
+            attractions (city_id, name, description, image_name, lat, lon)
+            VALUES ((SELECT id FROM cities WHERE name = ?), ?, ?, ?, ?, ?)
+        ''', (city_name, name, desc, image, lat, lon))
+
+    def _process_rows(self, cur, rows, is_city):
+        for row in rows:
+            if is_city:
+                self._save_city(cur, row)
+            else:
+                self._save_attraction(cur, row)
+
+    def _safe_float(self, val):
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except ValueError:
+            return None
 
 
 if __name__ == "__main__":
