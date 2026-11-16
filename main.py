@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTabWidget,
                              QTabBar, QInputDialog, QMessageBox,
                              QTableWidgetItem, QHeaderView, QAbstractItemView,
                              QDialog, QFileDialog, QLabel, QWidget,
-                             QVBoxLayout, QCheckBox,
+                             QVBoxLayout, QCheckBox, QToolTip,
                              QGraphicsView, QGraphicsScene,
                              QGraphicsPixmapItem, QGraphicsEllipseItem,
                              QGraphicsSimpleTextItem, QGraphicsItem)
@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import QFrame
 from UI.u import Ui_MainWindow
 from UI.u2 import Ui_Dialog
 from UI.u3 import Ui_Dialog as Ui_CityDialog
+from UI.u4 import Ui_Dialog as Ui_InfoDialog
 
 template = """"""
 dev = True
@@ -50,8 +51,10 @@ class Map(QGraphicsView):
         # убираем белую рамку по краям чтоб карта сливалась с окном
         self.setFrameShape(QFrame.Shape.NoFrame)
 
-        # Скрываем ползунки
-        self.setStyleSheet("QScrollBar { width: 0px; height: 0px; }")
+        # отключаем ползунки и их угловые элементы
+        self.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # устанавливаем цвет фона окна
         self.setBackgroundBrush(QBrush(QColor("#cceeff")))
@@ -74,6 +77,57 @@ class Map(QGraphicsView):
         self.show_atrs = True
         self.marker_items = []
         self._user_zoomed = False
+        self.highlighted_name = None
+        self.current_tooltip_name = None
+
+        self.setMouseTracking(True)
+
+        # Создаем виджет для масштаба
+        self.scale_label = QLabel("Масштаб", self)
+        self.scale_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.scale_line = QWidget(self)
+        self.scale_line.setStyleSheet("background-color: black;")
+        self.scale_line.setFixedHeight(3)
+        self.scale_line.setFixedWidth(100)
+
+        self.update_scale()
+
+    def update_scale(self):
+        # 40075 км - длина экватора
+        # self.pix.width() - ширина карты в пикселях
+        # self.transform().m11() - текущий коэффициент зума
+
+        current_scale = self.transform().m11()
+
+        # Сколько километров в одном пикселе на текущем зуме
+        km_per_pixel = (40075 / self.pix.width()) / current_scale
+
+        target_pixels = int(self.width() / 5)
+
+        target_km = target_pixels * km_per_pixel
+
+        if target_km >= 1000:
+            text = f"{target_km/1000:.1f} тыс. км"
+        elif target_km >= 1:
+            text = f"{target_km:.1f} км"
+        else:
+            text = f"{target_km*1000:.1f} м"
+
+        self.scale_label.setText(text)
+
+        self.scale_line.setFixedWidth(target_pixels)
+
+        center_x = self.width() // 2
+        y_line = self.height() - 15
+
+        line_x = center_x - (target_pixels // 2)
+        self.scale_line.move(line_x, y_line)
+
+        label_x = center_x - (self.scale_label.width() // 2)
+        label_y = y_line - self.scale_label.height() - 2
+
+        self.scale_label.move(label_x, label_y)
 
     def set_ct_and_atr(self, cities: list, attractions: list):
         self.cities = cities
@@ -135,14 +189,25 @@ class Map(QGraphicsView):
             for name, lat, lon in self.attractions:
                 pos = self._latlon_to_scene(lat, lon)
                 if pos:
-                    # ДОСТОПРИМЕЧАТЕЛЬНОСТЬ: увеличили до 18x18 (было 12x12)
-                    circle = QGraphicsEllipseItem(-9, -9, 18, 18)
+                    # Проверяем, выбрана ли эта точка
+                    if name.strip() == self.highlighted_name:
+                        # ВЫДЕЛЕННАЯ ТОЧКА (Зеленая и большая)
+                        circle = QGraphicsEllipseItem(-14, -14, 28, 28)
+                        circle.setToolTip(name)
+                        circle.setBrush(QBrush(Qt.GlobalColor.green))
+                        circle.setPen(QPen(Qt.GlobalColor.darkGreen, 3))
+                        circle.setZValue(20)  # Поверх всех остальных
+                    else:
+                        # ОБЫЧНАЯ ТОЧКА (Красная)
+                        circle = QGraphicsEllipseItem(-9, -9, 18, 18)
+                        circle.setToolTip(name)
+                        circle.setBrush(QBrush(Qt.GlobalColor.red))
+                        circle.setPen(QPen(Qt.GlobalColor.darkRed, 2))
+                        circle.setZValue(5)
+
                     circle.setFlag(
                         QGraphicsItem.GraphicsItemFlag.
                         ItemIgnoresTransformations)
-                    circle.setBrush(QBrush(Qt.GlobalColor.red))
-                    circle.setPen(QPen(Qt.GlobalColor.darkRed, 2))
-                    circle.setZValue(5)
                     circle.setPos(pos)
 
                     # СОХРАНЯЕМ ИНФОРМАЦИЮ В МАРКЕР
@@ -153,6 +218,9 @@ class Map(QGraphicsView):
                     self.marker_items.append(circle)
 
     def wheelEvent(self, event):
+        if self.pix.isNull():
+            return
+
         zoom_in_factor = 1.15
         zoom_out_factor = 1 / zoom_in_factor
 
@@ -175,17 +243,27 @@ class Map(QGraphicsView):
         if zoom_factor > 1 and new_scale >= max_scale:
             return
 
-        # Если мы отдаляем карту и достигли предела — просто
-        # ИГНОРИРУЕМ прокрутку
+        # Если мы отдаляем карту и достигли предела
         if zoom_factor < 1 and new_scale <= min_scale:
-            return  # <--- ВОТ ЗДЕСЬ. Никаких fitInView, просто стоп!
+            # Сбрасываем флаг, чтобы карта снова стала "недвижимой",
+            # как при старте
+            self._user_zoomed = False
+            self.fitInView(
+                self.scene.sceneRect(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+            self.update_scale()
+            return
 
         # Если все ок — применяем зум
         self._user_zoomed = True
         self.scale(zoom_factor, zoom_factor)
 
+        self.update_scale()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self.pix.isNull():
+            return
 
         # Считаем минимальный масштаб для НОВОГО размера окна
         min_scale = max(
@@ -206,6 +284,54 @@ class Map(QGraphicsView):
                 self.fitInView(
                     self.scene.sceneRect(),
                     Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+
+        self.update_scale()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Получаем элемент под курсором
+            item = self.itemAt(event.position().toPoint())
+
+            # Если это маркер города или достопримечательности
+            if item and item.data(0) in ["city", "attraction"]:
+                item_type = item.data(0)
+                name = item.data(1)
+
+                # Просим главное окно показать инфу
+                self.window().show_marker_info(name, item_type)
+                return  # Выходим, чтобы карта не начала перетаскиваться
+
+        super().mousePressEvent(event)
+
+    def center_on(self, lat: float, lon: float, name=None):
+        pos = self._latlon_to_scene(lat, lon)
+        if pos:
+            # Очищаем от пробелов на всякий случай
+            self.highlighted_name = name.strip() if name else None
+            self.resetTransform()
+            self.scale(1000.0, 1000.0)
+            self.centerOn(pos)
+            self._user_zoomed = True
+            self.redraw_markers()
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+
+        item = self.itemAt(event.position().toPoint())
+
+        # Если курсор над маркером (городом или достопримечательностью)
+        if item and item.data(0) == "attraction":
+            name = item.data(1)
+
+            # Показываем подсказку только если она изменилась
+            if name != self.current_tooltip_name:
+                QToolTip.showText(event.globalPosition().toPoint(), name, self)
+                self.current_tooltip_name = name
+        else:
+            # Прячем подсказку только если она была открыта
+            if self.current_tooltip_name is not None:
+                QToolTip.hideText()
+                self.current_tooltip_name = None
 
 
 class TabFilter(QObject):
@@ -243,6 +369,40 @@ class TabFilter(QObject):
                             self.tab_widget, 'Ошибка', 'Неправильный пароль')
                 return True  # клик игнорируется
         return super().eventFilter(tab, event)  # передача обработки дальше
+
+
+class InfoDialog(QDialog, Ui_InfoDialog):
+    def __init__(self, parent, title, description, image_name):
+        super().__init__(parent)
+        self.setupUi(self)
+        self.setWindowTitle('Достопримечательность')
+        self.title_lbl.setText(title)
+        self.title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Если картинка есть, пытаемся ее загрузить
+
+        if image_name:
+            image_name = str(image_name).strip()
+            if not image_name:
+                return
+            # Ищем картинку рядом с базой данных
+            cd = os.path.dirname(parent.db_path)
+            img_path = os.path.join(cd, "photos", image_name)
+
+            if os.path.exists(img_path):
+                pixmap = QPixmap(img_path)
+                # Масштабируем картинку, чтобы она влезла в окно
+                self.image_lbl.setPixmap(pixmap.scaled(
+                    450, 250,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                ))
+
+        self.desc_edit.setText(
+            description if description else "Описание отсутствует")
+
+        self.close_btn.clicked.connect(self.accept)
 
 
 class CityDialog(QDialog, Ui_CityDialog):
@@ -399,6 +559,9 @@ class Project(QMainWindow, Ui_MainWindow):
         self.initUI()
 
     def initUI(self):
+        # Подключаем двойной клик по строке таблицы
+        self.atr_table.cellDoubleClicked.connect(self.zoom_to_attraction)
+
         # создаем горячую клавишу
         shortcut = QShortcut(QKeySequence("Shift+F"), self)
         shortcut.activated.connect(self.password_off)
@@ -419,6 +582,10 @@ class Project(QMainWindow, Ui_MainWindow):
         # а не по столбцам таблицы
         self.atr_table.setHorizontalScrollMode(
             QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+        # отключаем редактирование при двойном клике
+        self.atr_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
 
         # создаем карту
         lbl = self.map
@@ -686,7 +853,7 @@ class Project(QMainWindow, Ui_MainWindow):
             base_dir = os.path.dirname(os.path.abspath(__file__))
 
         self.db_path = os.path.join(base_dir, "data", self.db_name)
-        self.map_path = os.path.join(base_dir, self.map_name)
+        self.map_path = os.path.join(base_dir, "data", self.map_name)
 
     def save(self):
         fname = QFileDialog.getSaveFileName(
@@ -1157,6 +1324,54 @@ class Project(QMainWindow, Ui_MainWindow):
             return float(val)
         except ValueError:
             return None
+
+    def show_marker_info(self, name, marker_type):
+        if marker_type == "city":
+            # Для города берем просто координаты
+            # (или можно вывести список его достопримечательностей)
+            rows = self.fetch('SELECT lat, lon FROM cities WHERE name = ?',
+                              (name,))[0]
+            if rows:
+                lat, lon = rows[0]
+                desc = f"Город {name}.\nКоординаты: {lat}, {lon}"
+                dialog = InfoDialog(self, name, desc, None)
+                dialog.exec()
+
+        elif marker_type == "attraction":
+            # Для достопримечательности берем описание и картинку
+            rows = self.fetch('''
+                SELECT description, image_name FROM attractions WHERE name = ?
+            ''', (name,))[0]
+
+            if rows:
+                desc, image_name = rows[0]
+                dialog = InfoDialog(self, name, desc, image_name)
+                dialog.exec()
+
+    def zoom_to_attraction(self, row, column):
+        lat_item = self.atr_table.item(row, 5)
+        lon_item = self.atr_table.item(row, 6)
+        name_item = self.atr_table.item(row, 2)
+
+        if (
+            lat_item and lon_item and name_item and lat_item.text() and
+            lon_item.text()
+        ):
+            try:
+                lat = float(lat_item.text())
+                lon = float(lon_item.text())
+                name = name_item.text().strip()
+
+                self.main_tabs.setCurrentIndex(0)
+
+                # Центрируем и подсвечиваем точку
+                self.map.center_on(lat, lon, name)
+
+                # Открываем окно с информацией
+                self.show_marker_info(name, "attraction")
+
+            except ValueError:
+                print("Ошибка: у этой записи битые координаты (не числа)")
 
 
 if __name__ == "__main__":

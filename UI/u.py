@@ -112,4 +112,4 @@ class Ui_MainWindow(object):
         self.change_ct_btn.setText(_translate("MainWindow", "Изменить"))
         self.del_ct_btn.setText(_translate("MainWindow", "Удалить"))
         self.admin_tabs.setTabText(self.admin_tabs.indexOf(self.tab_4), _translate("MainWindow", "Города"))
-        self.main_tabs.setTabText(self.main_tabs.indexOf(self.tab_2), _translate("MainWindow", "Админка"))
+        self.main_tabs.setTabText(self.main_tabs.indexOf(self.tab_2), _translate("MainWindow", "Таблицы"))
