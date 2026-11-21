@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>539</width>
-    <height>493</height>
+    <width>537</width>
+    <height>475</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -22,20 +22,38 @@
     </widget>
    </item>
    <item>
-    <widget class="QLabel" name="image_lbl">
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="text">
-      <string>Фото отсутствует</string>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="horizontalLayout">
+     <item>
+      <widget class="QPushButton" name="left_btn">
+       <property name="text">
+        <string>&lt;-</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="image_lbl">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="text">
+        <string>Фото отсутствует</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="right_btn">
+       <property name="text">
+        <string>-&gt;</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
-    <widget class="QTextEdit" name="desc_edit"/>
+    <widget class="QTextBrowser" name="desc_browser"/>
    </item>
    <item>
     <widget class="QPushButton" name="close_btn">
