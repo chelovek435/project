@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>635</width>
-    <height>411</height>
+    <height>381</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -16,34 +16,48 @@
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <layout class="QFormLayout" name="formLayout">
-     <item row="1" column="0">
+     <item row="0" column="0">
       <widget class="QLabel" name="label">
        <property name="text">
         <string>Город:</string>
        </property>
       </widget>
      </item>
-     <item row="3" column="0">
+     <item row="0" column="1">
+      <widget class="QComboBox" name="city_combobox"/>
+     </item>
+     <item row="1" column="0">
       <widget class="QLabel" name="label_2">
        <property name="text">
         <string>Название:</string>
        </property>
       </widget>
      </item>
-     <item row="3" column="1">
+     <item row="1" column="1">
       <widget class="QLineEdit" name="name_edit"/>
      </item>
-     <item row="5" column="0">
+     <item row="2" column="0">
       <widget class="QLabel" name="label_3">
        <property name="text">
         <string>Картинка:</string>
        </property>
       </widget>
      </item>
-     <item row="5" column="1">
-      <widget class="QLineEdit" name="image_edit"/>
+     <item row="2" column="1">
+      <layout class="QHBoxLayout" name="horizontalLayout_2">
+       <item>
+        <widget class="QLineEdit" name="image_edit"/>
+       </item>
+       <item>
+        <widget class="QPushButton" name="browse_btn">
+         <property name="text">
+          <string>Обзор</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </item>
-     <item row="7" column="0">
+     <item row="3" column="0">
       <widget class="QLabel" name="label_4">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
@@ -56,31 +70,28 @@
        </property>
       </widget>
      </item>
-     <item row="7" column="1">
+     <item row="3" column="1">
       <widget class="QTextEdit" name="desc_edit"/>
      </item>
-     <item row="1" column="1">
-      <widget class="QComboBox" name="city_combobox"/>
-     </item>
-     <item row="8" column="1">
-      <widget class="QLineEdit" name="lat_edit"/>
-     </item>
-     <item row="9" column="1">
-      <widget class="QLineEdit" name="lon_edit"/>
-     </item>
-     <item row="8" column="0">
+     <item row="4" column="0">
       <widget class="QLabel" name="label_5">
        <property name="text">
         <string>Широта:</string>
        </property>
       </widget>
      </item>
-     <item row="9" column="0">
+     <item row="4" column="1">
+      <widget class="QLineEdit" name="lat_edit"/>
+     </item>
+     <item row="5" column="0">
       <widget class="QLabel" name="label_6">
        <property name="text">
         <string>Долгота:</string>
        </property>
       </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QLineEdit" name="lon_edit"/>
      </item>
     </layout>
    </item>

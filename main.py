@@ -557,6 +557,7 @@ class AtrDialog(QDialog, Ui_AtrDialog):
     ):
         super().__init__(parent)
         self.par = parent
+        self.pending_photos = {}
         self.setWindowTitle('Редактирование достопримечательности')
         self.setupUi(self)
 
@@ -567,6 +568,7 @@ class AtrDialog(QDialog, Ui_AtrDialog):
         # подключаем кнопки
         self.ok.clicked.connect(self.check)
         self.cancel.clicked.connect(self.reject)
+        self.browse_btn.clicked.connect(self.select_photos)
 
         if redact:
             self.city_combobox.setCurrentText(city)
@@ -595,6 +597,19 @@ class AtrDialog(QDialog, Ui_AtrDialog):
             return
         self.coords = res
 
+        if self.pending_photos:
+            photos_dir = os.path.join(
+                os.path.dirname(self.par.db_path), "photos"
+            )
+            os.makedirs(photos_dir, exist_ok=True)
+            # Копируем только те файлы, имена которых остались в поле ввода
+            final_names = {
+                x.strip() for x in self.image_edit.text().split(',')
+            }
+            for fname, src_path in self.pending_photos.items():
+                if fname in final_names:
+                    shutil.copy(src_path, os.path.join(photos_dir, fname))
+
         # закрываем окно с результатом ok
         self.accept()
 
@@ -607,6 +622,38 @@ class AtrDialog(QDialog, Ui_AtrDialog):
             self.image_edit.text(),
             *self.coords
         )
+
+    def select_photos(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Выберите фотографии", "",
+            "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if not files:
+            return
+
+        photos_dir = os.path.join(os.path.dirname(self.par.db_path), "photos")
+        existing = [
+            x.strip() for x in self.image_edit.text().split(',') if x.strip()
+        ]
+
+        for fpath in files:
+            fname = os.path.basename(fpath)
+            dest = os.path.join(photos_dir, fname)
+
+            if os.path.abspath(fpath) != os.path.abspath(dest):
+                base, ext = os.path.splitext(fname)
+                counter = 1
+                # подбираем новое название чтоб не затереть старый файл
+                while os.path.exists(dest) or fname in self.pending_photos:
+                    fname = f"{base}_{counter}{ext}"
+                    dest = os.path.join(photos_dir, fname)
+                    counter += 1
+                self.pending_photos[fname] = fpath
+
+            if fname not in existing:
+                existing.append(fname)
+
+        self.image_edit.setText(", ".join(existing))
 
 
 class Project(QMainWindow, Ui_MainWindow):
