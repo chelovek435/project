@@ -3,10 +3,8 @@ import os
 import shutil
 import csv
 import openpyxl as op
-# import io
-# from PyQt6 import uic
 import sqlite3 as sl
-from PyQt6.QtWidgets import (QApplication, QMainWindow,
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QMenu,
                              QMessageBox, QTableWidgetItem, QHeaderView,
                              QAbstractItemView, QDialog, QFileDialog, QLabel,
                              QWidget, QVBoxLayout, QCheckBox, QToolTip,
@@ -22,8 +20,6 @@ from UI.u import Ui_MainWindow
 from UI.u2 import Ui_Dialog as Ui_AtrDialog
 from UI.u3 import Ui_Dialog as Ui_CityDialog
 from UI.u4 import Ui_Dialog as Ui_InfoDialog
-
-template = """"""
 
 
 class Map(QGraphicsView):
@@ -81,6 +77,8 @@ class Map(QGraphicsView):
 
         # подключаем отслеживание мышки
         self.setMouseTracking(True)
+        # для отслеживания нажатия клавиш ставим возможность фокуса на карту
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # Создаем виджет для масштаба
         self.scale_label = QLabel("Масштаб", self)
@@ -178,7 +176,8 @@ class Map(QGraphicsView):
 
     def _create_marker(
         self, name: str, pos: QPointF, marker_type: str,
-        radius: int, fill_color, border_color, border_width: int, z_value: int
+        radius: int, fill_color, border_color, border_width: int, z_value: int,
+        item_id=None
     ) -> QGraphicsEllipseItem:
         # ставим такие размеры, чтобы центр был в 0, 0
         circle = QGraphicsEllipseItem(-radius, -radius, radius * 2, radius * 2)
@@ -196,6 +195,7 @@ class Map(QGraphicsView):
         # чтобы позже при клике можно было получить ее
         circle.setData(0, marker_type)
         circle.setData(1, name)
+        circle.setData(2, item_id)
 
         self.scene.addItem(circle)
         self.marker_items.append(circle)
@@ -226,7 +226,7 @@ class Map(QGraphicsView):
                     text.setPos(16, -12)
 
         if self.show_atrs:
-            for name, lat, lon in self.attractions:
+            for atr_id, name, lat, lon in self.attractions:
                 pos = self._latlon_to_scene(lat, lon)
                 if pos:
                     if name.strip() == self.highlighted_name:
@@ -234,14 +234,14 @@ class Map(QGraphicsView):
                             name, pos, "attraction", radius=14,
                             fill_color=Qt.GlobalColor.green,
                             border_color=Qt.GlobalColor.darkGreen,
-                            border_width=3, z_value=20
+                            border_width=3, z_value=20, item_id=atr_id
                         )
                     else:
                         self._create_marker(
                             name, pos, "attraction", radius=9,
                             fill_color=Qt.GlobalColor.red,
                             border_color=Qt.GlobalColor.darkRed,
-                            border_width=2, z_value=5
+                            border_width=2, z_value=5, item_id=atr_id
                         )
 
     def wheelEvent(self, event):
@@ -283,7 +283,7 @@ class Map(QGraphicsView):
             self.update_scale()
             return
 
-        # Если все ок - применяем зум
+        # применяем зум
         self._user_zoomed = True
         self.scale(zoom_factor, zoom_factor)
 
@@ -304,25 +304,67 @@ class Map(QGraphicsView):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            # Получаем элемент под курсором
-            item = self.itemAt(event.position().toPoint())
+            # получаем все элементы под курсором
+            items = self.items(event.position().toPoint())
 
-            # Если это маркер города или достопримечательности
-            if item and item.data(0) in ["city", "attraction"]:
-                item_type = item.data(0)
-                name = item.data(1)
+            # оставляем только маркеры
+            markers = [
+                item for item in items
+                if item.data(0) in ["city", "attraction"]
+            ]
 
-                # Если кликнули по подсвеченной зелёной точке -
-                # снимаем выделение
-                if name.strip() == self.highlighted_name:
-                    self.highlighted_name = None
-                    self.redraw_markers()
+            # если кликнули мимо маркеров - ничего не делаем,
+            # даем карте перетаскиваться
+            if not markers:
+                super().mousePressEvent(event)
+                return
 
-                # Просим главное окно показать инфу
-                self.window().show_marker_info(name, item_type)
-                return  # Выходим, чтобы карта не начала перетаскиваться
+            # берем самый верхний маркер
+            top_item = markers[0]
+            top_type = top_item.data(0)
+            top_name = top_item.data(1)
+
+            # если сверху оказался город - просто открываем его без меню
+            if top_type == "city":
+                self.window().show_marker_info(top_name, "city")
+                return
+
+            # если сверху достопримечательность
+            if top_type == "attraction":
+                # собираем все достопримечательности под курсором
+                markers = [
+                    m for m in markers if m.data(0) == "attraction"]
+
+                # если она одна - открываем сразу
+                if len(markers) == 1:
+                    self.window().show_marker_info(
+                        top_item.data(2), "attraction")
+                else:
+                    # если их куча - показываем меню
+                    menu = QMenu(self)
+                    for m in markers:
+                        action = menu.addAction(m.data(1))
+                        action.setData(m.data(2))
+
+                    # показываем меню в месте клика
+                    selected_action = menu.exec(
+                        event.globalPosition().toPoint())
+
+                    if selected_action:
+                        name = selected_action.data()
+                        self.window().show_marker_info(name, "attraction")
+
+            return  # Выходим, чтобы карта не начала перетаскиваться
 
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.highlighted_name is not None:
+                self.highlighted_name = None
+                self.redraw_markers()
+            return
+        super().keyPressEvent(event)
 
     def center_on(self, lat: float, lon: float, name=None):
         pos = self._latlon_to_scene(lat, lon)
@@ -364,8 +406,8 @@ class InfoDialog(QDialog, Ui_InfoDialog):
         super().__init__(parent)
         self.par = parent
         self.title = title
-        self.ind = 0
         self.is_hide = False
+        self.ind = 0
         self.setupUi(self)
         self.setWindowTitle('Достопримечательность')
         self.title_lbl.setText(title)
@@ -387,8 +429,19 @@ class InfoDialog(QDialog, Ui_InfoDialog):
         self.desc_browser.setOpenLinks(False)
         self.desc_browser.anchorClicked.connect(self._on_link_click)
 
-        self.left_btn.clicked.connect(self.change_image)
-        self.right_btn.clicked.connect(self.change_image)
+        self.left_btn.clicked.connect(lambda: self.change_image(-1))
+        self.right_btn.clicked.connect(lambda: self.change_image(1))
+
+        # Отключаем фокус у кнопок и поля текста,
+        # чтобы они не перехватывали нажатия
+        self.left_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.right_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.desc_browser.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        # включаем фокус и ставим его
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
 
         if image_names:
             self.images = [
@@ -409,19 +462,14 @@ class InfoDialog(QDialog, Ui_InfoDialog):
 
         self.change_image()
 
-    def change_image(self):
+    def change_image(self, step: int = 0):
         if not self.images:
             self.image_lbl.clear()
             self.image_lbl.setText('Фото отсутствует')
             return
 
-        snd = self.sender()
-        if snd:
-            # зацикливаем список
-            if snd == self.left_btn:
-                self.ind = (self.ind - 1) % self.ln
-            elif snd == self.right_btn:
-                self.ind = (self.ind + 1) % self.ln
+        if step != 0:
+            self.ind = (self.ind + step) % self.ln
 
         image_name = self.images[self.ind]
 
@@ -439,7 +487,7 @@ class InfoDialog(QDialog, Ui_InfoDialog):
 
         if os.path.exists(img_path):
             pixmap = QPixmap(img_path)
-            # Масштабируем картинку, чтобы она влезла в окно
+            # масштабируем картинку, чтобы она влезла в окно
             self.image_lbl.setPixmap(pixmap.scaled(
                 450, 250,
                 Qt.AspectRatioMode.KeepAspectRatio,
@@ -448,6 +496,21 @@ class InfoDialog(QDialog, Ui_InfoDialog):
         else:
             self.image_lbl.clear()
             self.image_lbl.setText('Фото отсутствует')
+
+    def keyPressEvent(self, event):
+        # если картинок 1 или меньше, листать нечего
+        if self.ln > 1:
+            # 1049 - русская й
+            if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Q, 1049):
+                self.change_image(-1)
+                return
+            # 1059 - русская у
+            elif event.key() in (Qt.Key.Key_Right, Qt.Key.Key_E, 1059):
+                self.change_image(1)
+                return
+
+        # стандартное поведение QDialog(закрытие окна по Esc) сохранится
+        super().keyPressEvent(event)
 
     def _on_link_click(self, url):
         self.par.show_marker_info(url.toString(), "attraction")
@@ -477,18 +540,14 @@ class CityDialog(QDialog, Ui_CityDialog):
         if not self.city_edit.text().strip():
             QMessageBox.warning(self, 'Ошибка', 'Введите название города')
             return
-        if not self.par.valid_coord(self):
+        res = self.par.valid_coord(self)
+        if res is False:
             return
+        self.coords = res
         self.accept()
 
     def get_data(self) -> tuple[str, float | None, float | None]:
-        lat_text = self.lat_edit.text().strip()
-        lon_text = self.lon_edit.text().strip()
-        return (
-            self.city_edit.text().strip(),
-            float(lat_text) if lat_text else None,
-            float(lon_text) if lon_text else None
-        )
+        return (self.city_edit.text().strip(), *self.coords)
 
 
 class AtrDialog(QDialog, Ui_AtrDialog):
@@ -519,49 +578,34 @@ class AtrDialog(QDialog, Ui_AtrDialog):
             self.lon_edit.setText("" if not lon else str(lon))
 
     def check(self):
-        # получаем данные из полей
-        city, name, *_ = self.get_data()
+        city = self.city_combobox.currentText()
+        name = self.name_edit.text()
 
-        # проверяем обязательные поля
-        tx = []
-        if not city:
-            tx += ['Город']
-        if not name.strip():
-            tx += ['Название']
-        if tx:
-            if len(tx) == 1:
-                s1 = 'Поле'
-                s2 = 'обязательно'
-            else:
-                s1 = 'Поля'
-                s2 = 'обязательны'
-            s = s1 + ' "' + '", "'.join(tx) + '"'
+        missing = [field for field, val in [
+            ('Город', city), ('Название', name.strip())] if not val]
+        if missing:
             QMessageBox.warning(
                 self, 'Ошибка',
-                f'{s}'
-                f' {s2} для заполнения!'
+                f"Не заполнены обязательные поля: {', '.join(missing)}"
             )
             return
 
-        if not self.par.valid_coord(self):
+        res = self.par.valid_coord(self)
+        if res is False:
             return
+        self.coords = res
 
         # закрываем окно с результатом ok
         self.accept()
 
-    def get_data(self) -> tuple[str, str, str, str, float, float]:
-        lat_text = self.lat_edit.text().strip()
-        lon_text = self.lon_edit.text().strip()
-
-        lat = float(lat_text) if lat_text else None
-        lon = float(lon_text) if lon_text else None
-
+    def get_data(self) -> tuple[
+         str, str, str, str, float | None, float | None]:
         return (
             self.city_combobox.currentText(),
             self.name_edit.text(),
             self.desc_edit.toPlainText(),
             self.image_edit.text(),
-            lat, lon
+            *self.coords
         )
 
 
@@ -673,6 +717,7 @@ class Project(QMainWindow, Ui_MainWindow):
         redact_menu = menu_bar.addMenu('Справка')
         save_act = file_menu.addAction('Экспорт')
         import_menu = file_menu.addMenu('Импорт')
+        exit_act = file_menu.addAction('Выход')
         import_append_act = import_menu.addAction('Дополнить и обновить')
         import_replace_act = import_menu.addAction('Заменить текущую базу')
         about_act = redact_menu.addAction('О программе')
@@ -684,6 +729,8 @@ class Project(QMainWindow, Ui_MainWindow):
             lambda: self.import_data(replace=False))
         import_replace_act.triggered.connect(
             lambda: self.import_data(replace=True))
+        exit_act.setShortcut('Ctrl+Q')
+        exit_act.triggered.connect(self.close)
         about_act.triggered.connect(self.about)
         how_to_use.triggered.connect(self.how_to_use)
 
@@ -706,7 +753,7 @@ class Project(QMainWindow, Ui_MainWindow):
     def _fill_table(
         self, table, rows: list, headers: list, tooltip_col: int | None = None
     ):
-        table.clear()
+        table.clearContents()
         if not rows or not headers:
             # чтоб не было пустых строк
             table.setRowCount(0)
@@ -818,19 +865,31 @@ class Project(QMainWindow, Ui_MainWindow):
         if r is None:
             return
         atr_id = int(self.atr_table.item(r, 0).text())
-        city = self.atr_table.item(r, 1).text()
-        name = self.atr_table.item(r, 2).text()
+        old_city = self.atr_table.item(r, 1).text()
+        old_name = self.atr_table.item(r, 2).text()
         desc = self.atr_table.item(r, 3).text()
         image = self.atr_table.item(r, 4).text()
         lat = self.atr_table.item(r, 5).text()
         lon = self.atr_table.item(r, 6).text()
 
         dialog = AtrDialog(
-            self, city, name, desc, image, lat, lon, redact=True)
+            self, old_city, old_name, desc, image, lat, lon, redact=True)
         dialog.setWindowTitle('Изменение строки')
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             city, name, desc, image, lat, lon = dialog.get_data()
+
+            if (city != old_city or name.strip() != old_name) and self.fetch(
+                '''SELECT atr.id FROM attractions AS atr
+                JOIN cities AS ct ON atr.city_id = ct.id
+                WHERE ct.name = ? AND atr.name = ?''',
+                (city, name.strip())
+            )[0]:
+                QMessageBox.warning(
+                    self, 'Ошибка',
+                    'В этом городе уже есть такая достопримечательность!'
+                )
+                return
 
             self.execute(
                 '''UPDATE attractions
@@ -850,7 +909,17 @@ class Project(QMainWindow, Ui_MainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             city, name, desc, image, lat, lon = dialog.get_data()
 
-            # COALESCE берет первое ненулевое значение
+            if self.fetch('''
+                SELECT atr.id FROM attractions AS atr
+                JOIN cities AS ct ON atr.city_id = ct.id
+                WHERE ct.name = ? AND atr.name = ?
+            ''', (city, name.strip()))[0]:
+                QMessageBox.warning(
+                    self, 'Ошибка',
+                    'В этом городе уже есть такая достопримечательность!'
+                )
+                return
+
             self.execute('''
                     INSERT INTO attractions (
                         city_id, name, description, image_name, lat, lon
@@ -1116,7 +1185,8 @@ class Project(QMainWindow, Ui_MainWindow):
 
     def upd_map(self):
         cities = self.fetch('SELECT name, lat, lon FROM cities')[0]
-        attractions = self.fetch('SELECT name, lat, lon FROM attractions')[0]
+        attractions = self.fetch(
+            'SELECT id, name, lat, lon FROM attractions')[0]
         self.map.set_ct_and_atr(cities, attractions)
 
     def update_layers(self):
@@ -1125,13 +1195,14 @@ class Project(QMainWindow, Ui_MainWindow):
             self.cb_atrs.isChecked()
         )
 
-    def valid_coord(self, ss: CityDialog | AtrDialog) -> bool:
+    def valid_coord(self, ss: CityDialog | AtrDialog
+                    ) -> bool | tuple[float, float]:
         # проверка на ошибки
         lat_text = ss.lat_edit.text().strip()
         lon_text = ss.lon_edit.text().strip()
 
         if not lat_text and not lon_text:
-            return True
+            return (None, None)
 
         if not lat_text or not lon_text:
             QMessageBox.critical(
@@ -1140,8 +1211,8 @@ class Project(QMainWindow, Ui_MainWindow):
             return False
 
         try:
-            lat = float(lat_text)
-            lon = float(lon_text)
+            lat = float(lat_text.replace(',', '.'))
+            lon = float(lon_text.replace(',', '.'))
         except ValueError:
             QMessageBox.critical(
                 self, 'Ошибка', 'Широта и долгота должны быть числами')
@@ -1168,8 +1239,8 @@ class Project(QMainWindow, Ui_MainWindow):
         if coord_name:
             ok = QMessageBox.question(
                 self, 'Предупреждение',
-                f'Значение {coord_name} выходит за пределы этой карты, '
-                'поэтому точка на ней не появится\nВы уверены?',
+                f"Значение {', '.join(coord_name)} выходит за пределы этой "
+                f"карты, поэтому точка на ней не появится\nВы уверены?",
                 QMessageBox.StandardButton.Ok |
                 QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel
@@ -1177,7 +1248,7 @@ class Project(QMainWindow, Ui_MainWindow):
             if ok != QMessageBox.StandardButton.Ok:
                 return False
 
-        return True
+        return lat, lon
 
     def clear_db(self):
         with sl.connect(self.db_path) as con:
@@ -1222,13 +1293,11 @@ class Project(QMainWindow, Ui_MainWindow):
                     )
                     return
             elif fname.endswith('.xlsx'):
-                if replace:
-                    self.clear_db()
-                self._parse_excel(fname)
+                if not self._parse_excel(fname, replace):
+                    return
             elif fname.endswith('.csv'):
-                if replace:
-                    self.clear_db()
-                self._parse_csv(fname)
+                if not self._parse_csv(fname, replace):
+                    return
             else:
                 QMessageBox.warning(self, 'Ошибка', 'Неизвестный формат файла')
                 return
@@ -1244,8 +1313,23 @@ class Project(QMainWindow, Ui_MainWindow):
     def _load_db_file(self, fname):
         shutil.copy(fname, self.db_path)
 
-    def _parse_excel(self, fname):
+    def _parse_excel(self, fname, replace=False):
         wb = op.load_workbook(fname, read_only=True, data_only=True)
+        has_cities = 'Города' in wb.sheetnames
+        has_atrs = 'Достопримечательности' in wb.sheetnames
+
+        if not (has_cities or has_atrs):
+            wb.close()
+            QMessageBox.critical(
+                self, 'Ошибка',
+                "В Excel-файле не найдены листы "
+                "'Города' или 'Достопримечательности'"
+            )
+            return False
+
+        if replace:
+            self.clear_db()
+
         with sl.connect(self.db_path) as con:
             cur = con.cursor()
 
@@ -1260,8 +1344,9 @@ class Project(QMainWindow, Ui_MainWindow):
 
             con.commit()
         wb.close()
+        return True
 
-    def _parse_csv(self, fname):
+    def _parse_csv(self, fname, replace=False):
         base_dir = os.path.dirname(fname)
         base_name = os.path.basename(fname)
 
@@ -1285,7 +1370,8 @@ class Project(QMainWindow, Ui_MainWindow):
                 try:
                     header = next(reader)  # Читаем первую строку (заголовки)
                 except StopIteration:
-                    return  # Файл пустой
+                    QMessageBox.warning(self, 'Ошибка', 'Файл пустой!')
+                    return False
 
                 if len(header) == 3:
                     # Если 3 колонки, значит это города
@@ -1300,7 +1386,10 @@ class Project(QMainWindow, Ui_MainWindow):
                         "достопримечательностей. "
                         "Проверьте количество столбцов."
                     )
-                    return
+                    return False
+
+        if replace:
+            self.clear_db()
 
         with sl.connect(self.db_path) as con:
             cur = con.cursor()
@@ -1320,6 +1409,7 @@ class Project(QMainWindow, Ui_MainWindow):
                     self._process_rows(cur, reader, is_city=False)
 
             con.commit()
+        return True
 
     def _clean_values(self, row, n):
         res = []
@@ -1401,41 +1491,41 @@ class Project(QMainWindow, Ui_MainWindow):
         except ValueError:
             return None
 
-    def show_marker_info(self, name, marker_type):
+    def show_marker_info(self, idt, marker_type):
         if marker_type == "city":
             rows = self.fetch('SELECT lat, lon FROM cities WHERE name = ?',
-                              (name,))[0]
+                              (idt,))[0]
             if rows:
                 lat, lon = rows[0]
                 atrs = self.fetch('''
-                    SELECT atr.name FROM attractions AS atr
+                    SELECT atr.id, atr.name FROM attractions AS atr
                     JOIN cities AS ct ON atr.city_id = ct.id
                     WHERE ct.name = ?
-                ''', (name,))[0]
+                ''', (idt,))[0]
 
                 html = f"<p><b>Координаты:</b> {lat}, {lon}</p>"
                 html += "<p><b>Достопримечательности:</b></p><ul>"
                 if atrs:
-                    for row in atrs:
-                        atr_name = row[0]
+                    for atr_id, atr_name in atrs:
                         # Делаем название ссылкой
-                        html += f'<li><a href="{atr_name}">{atr_name}</a></li>'
+                        html += f'<li><a href="{atr_id}">{atr_name}</a></li>'
                 else:
                     html += "<li>Пока не добавлены</li>"
                 html += "</ul>"
 
-                dialog = InfoDialog(self, name, html, None)
+                dialog = InfoDialog(self, idt, html, None)
                 dialog.exec()
 
         elif marker_type == "attraction":
             # Для достопримечательности берем описание и картинку
             rows = self.fetch('''
-                SELECT description, image_name FROM attractions WHERE name = ?
-            ''', (name,))[0]
+                SELECT name, description, image_name
+                FROM attractions WHERE id = ?
+            ''', (idt,))[0]
 
             if rows:
-                desc, image_name = rows[0]
-                dialog = InfoDialog(self, name, desc, image_name)
+                atr_name, desc, image_name = rows[0]
+                dialog = InfoDialog(self, atr_name, desc, image_name)
                 dialog.exec()
 
     def zoom_to_marker(self, row, column):
@@ -1463,6 +1553,7 @@ class Project(QMainWindow, Ui_MainWindow):
             self.main_tabs.setCurrentIndex(0)
             # Центрируем и подсвечиваем точку
             self.map.center_on(lat, lon, name)
+            self.map.setFocus()  # ставим фокус на карту для ловли клавиш
         except ValueError:
             print("Ошибка: у этой записи битые координаты (не числа)")
 
