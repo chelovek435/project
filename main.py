@@ -798,7 +798,8 @@ class Project(QMainWindow, Ui_MainWindow):
         self.upd_map()
 
     def _fill_table(
-        self, table, rows: list, headers: list, tooltip_col: int | None = None
+        self, table, rows: list, headers: list, tooltip_col: int | None = None,
+        center: bool = False
     ):
         table.clearContents()
         if not rows or not headers:
@@ -818,6 +819,9 @@ class Project(QMainWindow, Ui_MainWindow):
                 tooltip_col is not None) else None
             for c, val in enumerate(row):
                 item = QTableWidgetItem("" if val is None else str(val))
+                if center:
+                    # выравнивание по центру
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if tip:
                     # ставим подсветку на строку при наведении
                     item.setToolTip(tip)
@@ -837,12 +841,10 @@ class Project(QMainWindow, Ui_MainWindow):
 
     def upd_ct_table(self):
         rows, headers = self.fetch('SELECT id, name, lat, lon FROM cities')
-        self._fill_table(self.ct_table, rows, headers)
+        self._fill_table(self.ct_table, rows, headers, center=True)
 
         h = self.ct_table.horizontalHeader()
-        h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
     def init_db(self):
         # Создаём папку data, если её случайно удалили
@@ -1035,7 +1037,7 @@ class Project(QMainWindow, Ui_MainWindow):
     def save(self):
         fname = QFileDialog.getSaveFileName(
             self,
-            'Сохранить файл', 'data',
+            'Сохранить файл', 'file',
             'EXCEL (*.xlsx);;CSV (*.csv);;Copy (*.db)'
         )[0]
 
