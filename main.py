@@ -133,6 +133,8 @@ class Map(QGraphicsView):
             text = f"{target_km*1000:.1f} м"
 
         self.scale_label.setText(text)
+        # пересчитывает ширину и высоту лейбла под новый текст
+        self.scale_label.adjustSize()
 
         self.scale_line.setFixedWidth(target_pixels)
 
